@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "attackchainbuilder"
+version = "0.1.0"
+description = "Build plausible attack chains from ExploitHunter CVE data with MITRE ATT&CK alignment"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "AttackChainBuilder" }]
+keywords = ["security", "attack-chain", "cve", "mitre-attck", "threat-intelligence"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/AttackChainBuilder"
+
+[project.scripts]
+acb = "attackchainbuilder.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "ruff>=0.6.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/attackchainbuilder"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 100
