@@ -191,6 +191,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Target software with versions (e.g. 'apache 2.4.49, openssl 1.1.1k')",
     )
     ai_cmd.add_argument(
+        "--enum-file",
+        help="Path to enumeration file (nmap, curl, whatweb, headers, config, free text)",
+    )
+    ai_cmd.add_argument(
         "--context",
         help="Engagement context (e.g. 'network access, no auth, internal pentest')",
     )
@@ -662,11 +666,12 @@ def cmd_ai(args: argparse.Namespace) -> int:
 
     input_path = Path(args.input)
     if not input_path.exists():
-        print(f"[!] File not found: {input_path}")
+        print("[!] File not found: " + str(input_path))
         return 1
 
-    if not args.software and not args.context:
-        print("[!] At least --software or --context is required for AI analysis")
+    # Require either --software, --enum-file, or --context
+    if not args.software and not args.context and not args.enum_file:
+        print("[!] Provide --software, --enum-file, or --context for AI analysis")
         return 1
 
     if not args.quiet:
@@ -687,6 +692,7 @@ def cmd_ai(args: argparse.Namespace) -> int:
         context=args.context,
         goal=args.goal,
         constraints=args.constraints,
+        enum_file=args.enum_file,
     )
 
     if not args.quiet:
@@ -694,6 +700,8 @@ def cmd_ai(args: argparse.Namespace) -> int:
         print("[*] Target software: " + str(sw_list))
         print("[*] Context: " + (enumeration.context or "N/A"))
         print("[*] Goal: " + enumeration.goal)
+        if enumeration.attack_phase:
+            print("[*] Attack phase: " + enumeration.attack_phase)
         print(f"[*] Resources: {args.cores} cores, {args.ram}GB RAM, {args.vram}GB VRAM")
 
     # Configure AI
