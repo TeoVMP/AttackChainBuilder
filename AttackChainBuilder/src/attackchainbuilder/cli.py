@@ -176,6 +176,84 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inspect_cmd.add_argument("--output", help="Output directory (for json format)")
 
+    # --- ai subcommand (ExploitHunterAI) ---
+    ai_cmd = sub.add_parser(
+        "ai",
+        help="Generate attack chains using local AI model (ExploitHunterAI)",
+    )
+    ai_cmd.add_argument(
+        "--input",
+        required=True,
+        help="Path to ExploitHunter JSON report",
+    )
+    ai_cmd.add_argument(
+        "--software",
+        help="Target software with versions (e.g. 'apache 2.4.49, openssl 1.1.1k')",
+    )
+    ai_cmd.add_argument(
+        "--context",
+        help="Engagement context (e.g. 'network access, no auth, internal pentest')",
+    )
+    ai_cmd.add_argument(
+        "--goal",
+        default="impact",
+        help="Target phase (default: impact)",
+    )
+    ai_cmd.add_argument(
+        "--constraint",
+        action="append",
+        dest="constraints",
+        help="Constraint (repeatable, e.g. --constraint 'no auth' --constraint 'network only')",
+    )
+    ai_cmd.add_argument(
+        "--model-path",
+        help="Path to GGUF model file (default: auto-download Phi-2)",
+    )
+    ai_cmd.add_argument(
+        "--cores",
+        type=int,
+        default=4,
+        help="CPU cores for inference (default: 4)",
+    )
+    ai_cmd.add_argument(
+        "--ram",
+        type=int,
+        default=8,
+        help="RAM in GB (default: 8)",
+    )
+    ai_cmd.add_argument(
+        "--vram",
+        type=float,
+        default=0.0,
+        help="VRAM in GB, 0=CPU only (default: 0)",
+    )
+    ai_cmd.add_argument(
+        "--context-length",
+        type=int,
+        default=4096,
+        help="Model context length (default: 4096)",
+    )
+    ai_cmd.add_argument(
+        "--temperature",
+        type=float,
+        default=0.3,
+        help="Generation temperature (default: 0.3)",
+    )
+    ai_cmd.add_argument(
+        "--max-tokens",
+        type=int,
+        default=2048,
+        help="Max tokens to generate (default: 2048)",
+    )
+    ai_cmd.add_argument(
+        "--format",
+        dest="output_format",
+        default="table",
+        help="Output: table or json (default: table)",
+    )
+    ai_cmd.add_argument("--output", help="Output directory (for json format)")
+    ai_cmd.add_argument("-q", "--quiet", action="store_true")
+
     return parser
 
 
@@ -574,6 +652,152 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ai(args: argparse.Namespace) -> int:
+    """Generate attack chains using ExploitHunterAI local model."""
+    from attackchainbuilder.ai_local import (
+        AIConfig,
+        generate_chain,
+        parse_enumeration,
+    )
+
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(f"[!] File not found: {input_path}")
+        return 1
+
+    if not args.software and not args.context:
+        print("[!] At least --software or --context is required for AI analysis")
+        return 1
+
+    if not args.quiet:
+        print(BANNER)
+        print("ExploitHunterAI - Local LLM Attack Chain Generation")
+        print(BANNER)
+
+    # Load and classify CVEs
+    cves = load(input_path)
+    classify_all(cves)
+    if not args.quiet:
+        classified = sum(1 for c in cves if c.phase is not None)
+        print(f"[*] Loaded {len(cves)} CVEs ({classified} classified)")
+
+    # Build enumeration input
+    enumeration = parse_enumeration(
+        software_str=args.software,
+        context=args.context,
+        goal=args.goal,
+        constraints=args.constraints,
+    )
+
+    if not args.quiet:
+        sw_list = [s["name"] + " " + s["version"] for s in enumeration.software]
+        print("[*] Target software: " + str(sw_list))
+        print("[*] Context: " + (enumeration.context or "N/A"))
+        print("[*] Goal: " + enumeration.goal)
+        print(f"[*] Resources: {args.cores} cores, {args.ram}GB RAM, {args.vram}GB VRAM")
+
+    # Configure AI
+    config = AIConfig(
+        model_path=args.model_path,
+        cores=args.cores,
+        ram_gb=args.ram,
+        vram_gb=args.vram,
+        context_length=args.context_length,
+        temperature=args.temperature,
+        max_tokens=args.max_tokens,
+    )
+
+    # Generate chain
+    result = generate_chain(enumeration, cves, config)
+
+    if result.viability == "ERROR":
+        print("[!] " + result.explanation)
+        return 1
+
+    # Display results
+    if not args.quiet:
+        print("\n[*] AI Analysis Complete")
+        print("    Viability: " + result.viability)
+        print(f"    Confidence: {result.confidence:.1f}%")
+        print("    Chain length: " + str(len(result.chain)))
+        if result.fp_analysis:
+            print("    FP flags: " + str(len(result.fp_analysis)))
+        print()
+
+    if args.output_format == "json":
+        import json
+        data = {
+            "tool": "ExploitHunterAI",
+            "enumeration": {
+                "software": enumeration.software,
+                "context": enumeration.context,
+                "goal": enumeration.goal,
+                "constraints": enumeration.constraints,
+            },
+            "result": {
+                "chain": result.chain,
+                "confidence": result.confidence,
+                "viability": result.viability,
+                "fp_analysis": result.fp_analysis,
+                "explanation": result.explanation,
+                "reasoning": result.reasoning,
+            },
+            "resources": {"cores": args.cores, "ram_gb": args.ram, "vram_gb": args.vram},
+        }
+        if args.output:
+            out_path = Path(args.output) / "ai_chain.json"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            print("[*] Written to " + str(out_path))
+        else:
+            print(json.dumps(data, indent=2))
+    else:
+        # Table format
+        print(BANNER)
+        print("ExploitHunterAI - ATTACK CHAIN RESULT")
+        print(BANNER)
+
+        if result.chain:
+            print(f"\nRECOMMENDED CHAIN (Confidence: {result.confidence:.1f}%):")
+            print("-" * 72)
+            for i, step in enumerate(result.chain, 1):
+                cve_id = step.get("cve_id", "?")
+                phase = step.get("phase", "?")
+                method = step.get("method", "N/A")
+                rationale = step.get("rationale", "N/A")
+                cvss = step.get("cvss", "N/A")
+                pocs = step.get("pocs", 0)
+                validated = "VALIDATED" if step.get("validated") else "UNVERIFIED"
+
+                print(f"  {i}. {cve_id} ({phase})")
+                print(f"     CVSS: {cvss} | PoCs: {pocs} | Status: {validated}")
+                print("     Method: " + str(method))
+                print("     Rationale: " + str(rationale))
+                print()
+
+            # Arrow notation
+            parts = []
+            for s in result.chain:
+                parts.append(s.get("cve_id", "?") + " (" + s.get("phase", "?") + ")")
+            arrow = " -> ".join(parts)
+            print("FLOW: " + arrow)
+        else:
+            print("\n[-] No viable attack chain found for this enumeration.")
+
+        if result.explanation:
+            print("\nEXPLANATION:\n" + result.explanation)
+
+        if result.fp_analysis:
+            print("\nFALSE POSITIVE ANALYSIS:")
+            for fp in result.fp_analysis:
+                print("  [!] " + fp)
+
+        if result.reasoning:
+            print("\nREASONING:\n" + result.reasoning)
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -584,6 +808,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_classify(args)
     if args.command == "inspect":
         return cmd_inspect(args)
+    if args.command == "ai":
+        return cmd_ai(args)
 
     parser.print_help()
     return 1

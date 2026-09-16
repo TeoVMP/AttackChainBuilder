@@ -8,17 +8,18 @@ AttackChainBuilder consumes ExploitHunter's JSON reports and constructs **attack
 
 - **Context-driven chain generation**: specify where the attacker is now (e.g., "already intruded, start from pivoting") and the tool builds chains from that phase onward.
 - **MITRE ATT&CK alignment**: each CVE is mapped to kill-chain phases (tactics) and specific techniques (T-IDs).
-- **Dual scoring**: exploitability product (probability all steps are exploitable) × severity mix (weighted CVSS, coverage, confidence, PoCs, KEV/ransomware bonus).
-- **Technical exploitation details**: attack vector, complexity, prerequisites, exploitation method, impact summary, detection opportunities — all extracted from CVSS vector + CWE + description.
+- **Dual scoring**: exploitability product (probability all steps are exploitable) x severity mix (weighted CVSS, coverage, confidence, PoCs, KEV/ransomware bonus).
+- **Technical exploitation details**: attack vector, complexity, prerequisites, exploitation method, impact summary, detection opportunities - all extracted from CVSS vector + CWE + description.
 - **Viability analysis**: assess whether each chain step has real-world exploitability (weaponized / PoC / theoretical).
 - **False positive detection**: flags classification mismatches, theoretical risks, vague descriptions, likely-patched CVEs, and unverified claims.
-- **Community PoC search**: optionally search GitHub for verified PoC repositories (stars ≥ 5).
+- **Community PoC search**: optionally search GitHub for verified PoC repositories (stars >= 5).
+- **ExploitHunterAI**: local LLM-powered attack chain generation from enumeration data (software, versions, context). Configurable CPU/RAM/VRAM resources.
 - **Debug mode**: show full classification reasoning, scoring breakdown, and FP flags per CVE.
 - **CVE inspector**: detailed single-CVE view with all technical data (`acb inspect`).
 - **Multiple output formats**: JSON, Markdown, CSV, Mermaid (.mmd), Graphviz DOT (.dot).
 - **Graph visualization**: separate graph files per chain, or merged into a single graph with `--merge-graph`.
 - **Optional AI advisor**: classify ambiguous CVEs and generate chain explanations via OpenAI-compatible API (opt-in, stdlib `urllib`, no extra dependencies).
-- **Zero runtime dependencies**: stdlib only (Python ≥3.10). Dev: pytest + ruff.
+- **Zero runtime dependencies**: stdlib only (Python >=3.10). Dev: pytest + ruff. AI: llama-cpp-python (optional).
 - **Backward-compatible**: works with ExploitHunter JSON from v2.0+ (extended with CVSS vectors and CWE).
 
 ## Installation
@@ -26,6 +27,12 @@ AttackChainBuilder consumes ExploitHunter's JSON reports and constructs **attack
 ```bash
 cd AttackChainBuilder
 pip install -e ".[dev]"
+```
+
+With ExploitHunterAI (local LLM):
+
+```bash
+pip install -e ".[dev,ai]"
 ```
 
 ## Quick Start
@@ -70,6 +77,25 @@ acb inspect CVE-2021-44228 --input report.json --search-pocs --format json --out
 ```bash
 acb classify --input report.json
 acb classify --input report.json --debug
+```
+
+### 5. ExploitHunterAI — Local LLM Attack Chain Generation
+
+```bash
+# Install AI dependencies
+pip install -e ".[ai]"
+
+# Generate attack chain from enumeration
+acb ai --input report.json --software "apache 2.4.49, openssl 1.1.1k" --context "network access, no auth"
+
+# With resource configuration
+acb ai --input report.json --software "apache 2.4.49" --cores 8 --ram 16 --vram 4
+
+# With custom model
+acb ai --input report.json --software "wordpress 5.8" --model-path /path/to/model.gguf
+
+# JSON output
+acb ai --input report.json --software "apache 2.4.49" --format json --output reports/
 ```
 
 ## Usage Reference
@@ -181,6 +207,78 @@ FALSE POSITIVE FLAGS:
   [MEDIUM] classification_mismatch: CVSS vector suggests INITIAL_ACCESS but keywords suggest EXECUTION.
 ```
 
+### `acb ai` — ExploitHunterAI
+
+Local LLM-powered attack chain generation from enumeration data.
+
+```
+acb ai --input <file.json> [flags]
+
+Required:
+  --input PATH              ExploitHunter JSON report
+  --software SW             Target software with versions (e.g. "apache 2.4.49, openssl 1.1.1k")
+  --context TEXT            Engagement context (e.g. "network access, no auth, internal pentest")
+
+Options:
+  --goal PHASE              Target phase (default: impact)
+  --constraint TEXT          Constraint (repeatable, e.g. --constraint "no auth")
+
+Model:
+  --model-path PATH         Path to GGUF model (default: auto-download Phi-2)
+  --cores N                 CPU cores for inference (default: 4)
+  --ram N                   RAM in GB (default: 8)
+  --vram N                  VRAM in GB, 0=CPU only (default: 0)
+  --context-length N        Model context length (default: 4096)
+  --temperature FLOAT       Generation temperature (default: 0.3)
+  --max-tokens N            Max tokens to generate (default: 2048)
+
+Output:
+  --format FORMAT           Output: table (default) or json
+  --output DIR              Output directory
+  -q, --quiet
+```
+
+**Resource configuration:**
+
+| Setup | Cores | RAM | VRAM | Notes |
+|-------|-------|-----|------|-------|
+| Minimal | 2 | 4GB | 0 | Slow but works |
+| Recommended | 4 | 8GB | 0 | Good balance |
+| Fast | 8 | 16GB | 0 | Multi-core CPU |
+| GPU | 4 | 8GB | 2GB+ | GPU offload |
+| Full GPU | 4 | 8GB | 4GB+ | Full GPU offload |
+
+**Example output:**
+
+```
+========================================================================
+ExploitHunterAI - ATTACK CHAIN RESULT
+========================================================================
+
+RECOMMENDED CHAIN (Confidence: 85.0%):
+------------------------------------------------------------------------
+  1. CVE-2021-44228 (INITIAL_ACCESS)
+     CVSS: 10.0 | PoCs: 3 | Status: VALIDATED
+     Method: Unsafe deserialization via JNDI injection
+     Rationale: Log4Shell is weaponized, no auth required, network accessible
+
+  2. CVE-2021-3156 (PRIVILEGE_ESCALATION)
+     CVSS: 7.8 | PoCs: 2 | Status: VALIDATED
+     Method: Heap-based buffer overflow in sudo
+     Rationale: Local privilege escalation after initial foothold
+
+FLOW: CVE-2021-44228 (INITIAL_ACCESS) -> CVE-2021-3156 (PRIVILEGE_ESCALATION)
+
+EXPLANATION:
+The attacker exploits Log4Shell (CVE-2021-44228) to gain initial access
+via JNDI injection in Apache Log4j2. After establishing a foothold, they
+escalate privileges using the sudo heap overflow (CVE-2021-3156) to gain
+root access on the target system.
+
+FALSE POSITIVE ANALYSIS:
+  [!] CVE-2021-44228: Vector suggests INITIAL_ACCESS, keywords suggest EXECUTION — classified as INITIAL_ACCESS (higher priority)
+```
+
 ## Environment Variables (AI Advisor)
 
 | Variable | Default | Description |
@@ -195,20 +293,21 @@ FALSE POSITIVE FLAGS:
 src/attackchainbuilder/
 ├── __init__.py          # Version
 ├── __main__.py          # python -m attackchainbuilder
-├── cli.py               # argparse CLI: build / classify / inspect
+├── cli.py               # argparse CLI: build / classify / inspect / ai
 ├── models.py            # KillPhase, CveRecord, ChainStep, AttackChain, ExploitDetails
-├── loader.py            # Parse ExploitHunter JSON → CveRecord list
+├── loader.py            # Parse ExploitHunter JSON -> CveRecord list
 ├── normalize.py         # Software name normalization (synonyms, tokenization)
-├── phases.py            # KillPhase ↔ ATT&CK tactic mapping
+├── phases.py            # KillPhase <-> ATT&CK tactic mapping
 ├── attack.py            # ~20 curated ATT&CK techniques with keyword triggers
-├── classify.py          # CVE → phase + technique (CVSS vector > keywords > CWE)
+├── classify.py          # CVE -> phase + technique (CVSS vector > keywords > CWE)
 ├── details.py           # Extract technical exploitation details (vector/CWE/description)
 ├── analyzer.py          # Viability assessment + false positive detection
 ├── poc_search.py        # GitHub PoC search (optional, requires network)
 ├── debug.py             # Debug mode output (classification reasoning, scoring)
 ├── chain.py             # Graph builder + context-driven DFS chain search
-├── scoring.py           # exploitability product × severity mix
+├── scoring.py           # exploitability product x severity mix
 ├── ai.py                # Optional LLM advisor (urllib, OpenAI-compatible)
+├── ai_local.py          # ExploitHunterAI - local LLM (llama-cpp-python)
 └── report/
     ├── __init__.py      # Report dispatcher
     ├── json_out.py      # Structured JSON with exploit_details, FP flags, viability

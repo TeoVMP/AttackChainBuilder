@@ -30,6 +30,7 @@ acb = "attackchainbuilder.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "ruff>=0.6.0"]
+ai = ["llama-cpp-python>=0.2.0", "huggingface-hub>=0.17.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/attackchainbuilder"]
