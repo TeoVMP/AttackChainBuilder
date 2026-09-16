@@ -194,7 +194,10 @@ def generate_chain(
     cves: list[CveRecord],
     config: AIConfig | None = None,
 ) -> AIChainResult:
-    """Generate an attack chain using local AI model."""
+    """Generate an attack chain using local AI model with real-time progress."""
+    import sys
+    import time
+
     if config is None:
         config = AIConfig()
 
@@ -205,17 +208,48 @@ def generate_chain(
 
     prompt = _build_prompt(enumeration, cves)
     print(f"[*] ExploitHunterAI: generating chain ({len(enumeration.software)} sw, {len(cves)} CVEs)...")
+    print("[*] Streaming output (real-time):")
+    print("-" * 72)
 
-    response = model.create_chat_completion(
+    start_time = time.time()
+    token_count = 0
+    full_response = ""
+
+    # Stream tokens in real-time
+    stream = model.create_chat_completion(
         messages=[
             {"role": "system", "content": "You are ExploitHunterAI. Always respond with valid JSON."},
             {"role": "user", "content": prompt},
         ],
         temperature=config.temperature,
         max_tokens=config.max_tokens,
+        stream=True,
     )
 
-    raw = response["choices"][0]["message"]["content"]
+    for chunk in stream:
+        delta = chunk["choices"][0].get("delta", {})
+        content = delta.get("content", "")
+        if content:
+            full_response += content
+            token_count += 1
+            # Print token inline with flush
+            sys.stdout.write(content)
+            sys.stdout.flush()
+
+            # Show progress every 20 tokens
+            if token_count % 20 == 0:
+                elapsed = time.time() - start_time
+                tps = token_count / elapsed if elapsed > 0 else 0
+                sys.stdout.write(f"\n[{token_count} tokens | {elapsed:.1f}s | {tps:.1f} tok/s] ")
+                sys.stdout.flush()
+
+    elapsed = time.time() - start_time
+    tps = token_count / elapsed if elapsed > 0 else 0
+
+    print("\n" + "-" * 72)
+    print(f"[*] Generation complete: {token_count} tokens in {elapsed:.1f}s ({tps:.1f} tok/s)")
+
+    raw = full_response
     result = _parse_response(raw)
 
     # Cross-reference with ExploitHunter data
@@ -231,7 +265,8 @@ def generate_chain(
             validated.append(step)
         else:
             step["validated"] = False
-            result.fp_analysis.append(f"{step.get('cve_id')}: not in ExploitHunter data")
+            result.fp_analysis.append("{}: not in ExploitHunter data".format(
+                step.get("cve_id")))
 
     result.chain = validated
     if validated:
