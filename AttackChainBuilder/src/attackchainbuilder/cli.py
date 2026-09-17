@@ -213,6 +213,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--model-path",
         help="Path to GGUF model file (default: auto-download Phi-2)",
     )
+    # Backend selection
+    ai_cmd.add_argument(
+        "--backend",
+        choices=["local", "openai", "opencode", "custom"],
+        default="local",
+        help="LLM backend: local (llama-cpp), openai, opencode, custom (default: local)",
+    )
+    ai_cmd.add_argument(
+        "--api-url",
+        help="API endpoint URL (for openai/opencode/custom backends)",
+    )
+    ai_cmd.add_argument(
+        "--api-key",
+        help="API key (or set OPENAI_API_KEY / ACB_AI_API_KEY env var)",
+    )
+    ai_cmd.add_argument(
+        "--model",
+        help="Model name for remote backends (e.g. gpt-4o-mini, claude-3-sonnet)",
+    )
     ai_cmd.add_argument(
         "--cores",
         type=int,
